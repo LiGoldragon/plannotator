@@ -1,0 +1,20 @@
+{
+  "name": "@plannotator/capability-history",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Opaque, attenuable capabilities for lineage-scoped artifact history",
+  "exports": {
+    ".": "./index.ts",
+    "./broker": "./broker.ts",
+    "./model": "./model.ts",
+    "./private-authority": "./private-authority.ts",
+    "./unix-server": "./unix-server.ts"
+  },
+  "files": ["*.ts", "!*.test.ts"],
+  "dependencies": {},
+  "devDependencies": {
+    "@plannotator/core": "workspace:*",
+    "@types/node": "^25.5.2",
+    "typescript": "~5.8.2"
+  }
+}
