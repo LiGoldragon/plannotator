@@ -3,10 +3,14 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Opaque, attenuable capabilities for lineage-scoped artifact history",
+  "scripts": {
+    "test": "bun test broker.test.ts private-authority.test.ts unix-server.test.ts"
+  },
   "exports": {
     ".": "./index.ts",
     "./broker": "./broker.ts",
     "./model": "./model.ts",
+    "./file-source": "./file-source.ts",
     "./private-authority": "./private-authority.ts",
     "./unix-server": "./unix-server.ts"
   },

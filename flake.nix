@@ -10,7 +10,7 @@
       checks = forAllSystems (system:
         let pkgs = nixpkgs.legacyPackages.${system};
         in {
-          capability-history = pkgs.callPackage ./checks/capability-history { src = self; };
+          capability-history = pkgs.callPackage ./checks/capability-history { src = ./.; };
         });
     };
 }

@@ -47,8 +47,22 @@ describe("Unix capability transport", () => {
     expect(denied.status).toBe(401);
     const response = await get(socketPath, "/v1/artifacts/artifact-1", `Capability ${token}`);
     expect(response).toEqual({ status: 200, body: bytes, contentType: "text/plain" });
-    const noPaths = await get(socketPath, "/v1/artifacts/by-path?path=/tmp/private", `Capability ${token}`);
+    const lineage = await get(socketPath, "/v1/lineage/current?attest=1", `Capability ${token}`);
+    expect(lineage.status).toBe(403); // artifact-only token cannot enumerate lineage
+    const noPaths = await get(socketPath, "/v1/artifacts/by-path/tmp/private", `Capability ${token}`);
     expect(noPaths.status).toBe(404);
     rmSync(socketPath, { force: true });
+  });
+
+  test("runs an authorized lineage map through the socket and rejects private mode without peer credentials", async () => {
+    const socketPath = join(tmpdir(), `capability-lineage-${process.pid}-${Date.now()}.sock`);
+    const broker = new CapabilityHistoryBroker({ source: { async read() { return null; } }, now: () => new Date("2026-09-09T12:00:00.000Z"), randomBytes: () => new Uint8Array(32).fill(9) });
+    broker.registerFlow({ id: "past", createdAt: "2026-09-09T10:00:00.000Z" });
+    broker.registerFlow({ id: "present", predecessorId: "past", relation: "succession", createdAt: "2026-09-09T11:00:00.000Z" });
+    const token = broker.issue({ issuerIdentity: "authority", subjectIdentity: "gateway", audience: "desktop", anchorFlowId: "present", scopes: ["lineage:read"], artifactKinds: [], pastDepth: 1, futureDepth: 0, expiresAt: "2026-09-09T13:00:00.000Z" });
+    running = await startCapabilityHistoryUnixServer({ mode: "synthetic", socketPath, broker, principal: { identity: "gateway", audience: "desktop" } });
+    const response = await get(socketPath, "/v1/lineage/current?attest=1", `Capability ${token}`);
+    expect(response.status).toBe(200);
+    expect(JSON.parse(new TextDecoder().decode(response.body)).ascii).toBe("past\n`- present [current]");
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { FIXTURE_V1_LOCAL } from "@plannotator/core/guide-format-fixtures";
+import { FIXTURE_V1_LOCAL } from "../core/guide-format-fixtures";
 import { CapabilityHistoryBroker, CapabilityHistoryError } from "./broker";
 import type { ArtifactRead, ArtifactSource } from "./model";
 
@@ -43,6 +43,7 @@ function setup() {
   broker.registerFlow({ id: "past", createdAt: "2026-09-09T10:00:00.000Z" });
   broker.registerFlow({ id: "present", predecessorId: "past", relation: "succession", createdAt: "2026-09-09T11:00:00.000Z" });
   broker.registerFlow({ id: "future", predecessorId: "present", relation: "succession", createdAt: "2026-09-09T13:00:00.000Z" });
+  broker.registerFlow({ id: "unauthorized-root", createdAt: "2026-09-09T09:00:00.000Z" });
   broker.registerArtifact({
     id: "guide-public-fixture",
     flowId: "past",
@@ -50,6 +51,7 @@ function setup() {
     contentType: "application/json",
     expectedRevision: "guide-r1",
   });
+  broker.registerArtifact({ id: "outside-authority", flowId: "unauthorized-root", kind: "prompt", contentType: "text/plain", expectedRevision: "secret-r1" });
   const token = broker.issue({
     issuerIdentity: "authority",
     subjectIdentity: "terra-present",
@@ -91,14 +93,24 @@ describe("CapabilityHistoryBroker", () => {
       expect.objectContaining({ artifactId: "guide-public-fixture", flowId: "past", fresh: true, revision: "guide-r1" }),
     ]);
     expect(source.calls).toEqual(["attest:guide-public-fixture"]);
+    expect(history.ascii).not.toContain("unauthorized");
+    expect(source.calls).not.toContain("attest:outside-authority");
+  });
+
+  test("rejects a stale source revision from an actual authorized read", async () => {
+    const { broker, source, token } = setup();
+    source.revision = "guide-r2";
+    await expect(broker.readArtifact(token, { identity: "terra-present", audience: "desktop-gateway" }, "guide-public-fixture"))
+      .rejects.toMatchObject({ code: "stale_source" });
+    expect(source.calls).toEqual(["read:guide-public-fixture"]);
   });
 
   test("a future child receives a narrower capability and parent revocation reaches it", async () => {
     const { broker, source, token } = setup();
     const child = broker.inheritToChild(token, { identity: "terra-present", audience: "desktop-gateway" }, {
       childFlowId: "future",
-      subjectIdentity: "terra-future",
-      audience: "future-gateway",
+      subjectIdentity: "terra-present",
+      audience: "desktop-gateway",
       scopes: ["artifact:read"],
       artifactKinds: ["transcript"],
       pastDepth: 2,
@@ -106,10 +118,10 @@ describe("CapabilityHistoryBroker", () => {
       expiresAt: "2026-09-09T13:00:00.000Z",
     });
 
-    const read = await broker.readArtifact(child, { identity: "terra-future", audience: "future-gateway" }, "guide-public-fixture");
+    const read = await broker.readArtifact(child, { identity: "terra-present", audience: "desktop-gateway" }, "guide-public-fixture");
     expect(read.bytes).toEqual(GUIDE_BYTES);
     broker.revoke(token);
-    await expect(broker.readArtifact(child, { identity: "terra-future", audience: "future-gateway" }, "guide-public-fixture"))
+    await expect(broker.readArtifact(child, { identity: "terra-present", audience: "desktop-gateway" }, "guide-public-fixture"))
       .rejects.toMatchObject({ code: "revoked" });
     expect(source.calls).toEqual(["read:guide-public-fixture"]);
   });
@@ -126,5 +138,39 @@ describe("CapabilityHistoryBroker", () => {
       futureDepth: 0,
       expiresAt: "2026-09-09T13:00:00.000Z",
     })).toThrow(CapabilityHistoryError);
+  });
+
+  test("attenuates audience, expiry, resource, kind, and lineage depth", () => {
+    const { broker, token } = setup();
+    const base = {
+      childFlowId: "future",
+      subjectIdentity: "terra-present",
+      audience: "desktop-gateway",
+      scopes: ["artifact:read"] as const,
+      artifactKinds: ["transcript"] as const,
+      artifactIds: ["guide-public-fixture"] as const,
+      pastDepth: 2,
+      futureDepth: 0,
+      expiresAt: "2026-09-09T13:00:00.000Z",
+    };
+    for (const change of [
+      { audience: "redirected" },
+      { expiresAt: "2026-09-09T15:00:00.000Z" },
+      { pastDepth: 3 },
+      { futureDepth: 1 },
+    ]) {
+      expect(() => broker.inheritToChild(token, { identity: "terra-present", audience: "desktop-gateway" }, { ...base, ...change }))
+        .toThrow(CapabilityHistoryError);
+    }
+
+    const narrowParent = broker.issue({
+      issuerIdentity: "authority", subjectIdentity: "terra-present", audience: "desktop-gateway", anchorFlowId: "present",
+      scopes: ["artifact:read", "child:issue"], artifactKinds: ["transcript"], artifactIds: ["guide-public-fixture"],
+      pastDepth: 1, futureDepth: 1, expiresAt: "2026-09-09T14:00:00.000Z",
+    });
+    expect(() => broker.inheritToChild(narrowParent, { identity: "terra-present", audience: "desktop-gateway" }, { ...base, artifactKinds: ["prompt"] }))
+      .toThrow(CapabilityHistoryError);
+    expect(() => broker.inheritToChild(narrowParent, { identity: "terra-present", audience: "desktop-gateway" }, { ...base, artifactIds: undefined }))
+      .toThrow(CapabilityHistoryError);
   });
 });
